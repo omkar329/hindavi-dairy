@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState } from "react";
 
 // ===== TELEGRAM CONFIG =====
 const TELEGRAM_BOT_TOKEN = process.env.REACT_APP_TELEGRAM_BOT_TOKEN || "8985832159:AAGZy1qOX-qQ6YfhiBnlDm7MvsU_w88UjpE";
@@ -108,7 +108,7 @@ export default function HindaviDairy() {
       showNotif("शेतकरी/कंपनी, लिटर आणि दर भरणे अनिवार्य आहे", "error"); 
       return;
     }
-    const user = users.find(u => u.id == newCollection.userId);
+    const user = users.find(u => u.id === newCollection.userId);
     const litres = parseFloat(newCollection.litres);
     const rate = parseFloat(newCollection.rate);
     const fat = parseFloat(newCollection.fat) || 0;
