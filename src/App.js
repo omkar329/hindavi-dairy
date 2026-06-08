@@ -1,4 +1,7 @@
+import { db } from "./firebase";
+import { collection, addDoc } from "firebase/firestore";
 import React, { useState } from "react";
+
 // ===== TELEGRAM CONFIG =====
 const TELEGRAM_BOT_TOKEN = process.env.REACT_APP_TELEGRAM_BOT_TOKEN || "8985832159:AAGZy1qOX-qQ6YfhiBnlDm7MvsU_w88UjpE";
 
@@ -102,12 +105,23 @@ export default function HindaviDairy() {
     setNewAdminSetup({ id: "", pass: "", name: "" });
   };
 
-  const handleAddCollection = () => {
+  // ===== FIXED ERROR FUNCTION =====
+  const handleAddCollection = async () => {
+    // १. आधीच चेक करा की युझर आयडी सिलेक्ट केला आहे की नाही
     if (!newCollection.userId || !newCollection.litres || !newCollection.rate) {
       showNotif("शेतकरी/कंपनी, लिटर आणि दर भरणे अनिवार्य आहे", "error"); 
       return;
     }
-    const user = users.find(u => u.id === newCollection.userId);
+
+    // २. String आयडीला Integer मध्ये कन्वर्शन करून युझर शोधा
+    const user = users.find(u => u.id === parseInt(newCollection.userId));
+    
+    // ३. जर कोणत्या कारणाने युझर डेटा सापडला नाही, तर क्रॅश होऊ न देता इथेच थांबवा
+    if (!user) {
+      showNotif("निवडलेला शेतकरी/कंपनी सिस्टीममध्ये सापडली नाही!", "error");
+      return;
+    }
+
     const litres = parseFloat(newCollection.litres);
     const rate = parseFloat(newCollection.rate);
     const fat = parseFloat(newCollection.fat) || 0;
@@ -117,14 +131,16 @@ export default function HindaviDairy() {
     const coll = {
       id: collections.length + 1,
       userId: parseInt(newCollection.userId),
-      userName: user.name,
+      userName: user.name, // आता इथे एरर येणार नाही
       date: new Date().toISOString().split("T")[0],
       session: newCollection.session,
       litres, fat, smf, rate, amount,
     };
+    
     setCollections([...collections, coll]);
+    await addDoc(collection(db, "collections"), coll);
 
-    if (user && user.telegramChatId) {
+    if (user.telegramChatId) {
       const receipt = `🥛 *दूध संकलन पावती - हिंदवी डेअरी* \n\nदिनांक: ${coll.date} (${coll.session})\nग्राहक/कंपनी: ${coll.userName}\nदूध: ${coll.litres} लि.\nफॅट: ${coll.fat}%\nSMF: ${coll.smf}%\nदर: ₹${coll.rate}/लि.\n*एकूण रक्कम: ₹${coll.amount}*\n\nधन्यवाद! 🙏`;
       sendTelegramNotification(user.telegramChatId, receipt);
     }
@@ -133,7 +149,7 @@ export default function HindaviDairy() {
     showNotif("संकलन नोंदवून पावती पाठवली! ✅");
   };
 
-  const handleAddUser = () => {
+  const handleAddUser = async () => {
     if (!newUser.name || !newUser.mobile || !newUser.village) {
       showNotif("सर्व माहिती भरा", "error"); return;
     }
@@ -147,6 +163,14 @@ export default function HindaviDairy() {
         joined: new Date().toISOString().split("T")[0],
       };
       setUsers([...users, user]);
+      await addDoc(collection(db, "farmers"), {
+        name: newUser.name,
+        mobile: newUser.mobile,
+        village: newUser.village,
+        type: newUser.type,
+        telegramChatId: newUser.telegramChatId,
+        joined: new Date().toISOString()
+      });
       showNotif(`नवीन ${newUser.type} जोडला गेला ✅`);
     }
     setNewUser({ name: "", mobile: "", telegramChatId: "", village: "", type: "शेतकरी" });
@@ -309,7 +333,7 @@ export default function HindaviDairy() {
                   <label style={S.label}>शेतकरी किंवा कंपनी निवडा</label>
                   <select style={S.input} value={newCollection.userId} onChange={e => setNewCollection({ ...newCollection, userId: e.target.value })}>
                     <option value="">-- निवडा --</option>
-                    {users.map(u => <option key={u.id} value={u.id} style={{ color: '#000' }}>[{u.type}] {u.name} ({u.village})</option>)}
+                    {users.map(u => <option key={u.id} value={String(u.id)} style={{ color: '#000' }}>[{u.type}] {u.name} ({u.village})</option>)}
                   </select>
                 </div>
                 <div>
