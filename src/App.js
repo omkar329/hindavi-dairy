@@ -1,5 +1,5 @@
 import { db } from "./firebase";
-import { collection, addDoc, getDocs, doc, updateDoc } from "firebase/firestore";
+import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc } from "firebase/firestore";
 import React, { useState, useEffect } from "react";
 
 // ===== TELEGRAM CONFIG =====
@@ -16,6 +16,7 @@ export default function HindaviDairy() {
   const [adminsList, setAdminsList] = useState(initialAdmins);
   const [users, setUsers] = useState([]);
   const [collections, setCollections] = useState([]);
+  const [complaints, setComplaints] = useState([]); 
   
   const [adminTab, setAdminTab] = useState("dashboard");
   const [loginRole, setLoginRole] = useState("admin"); 
@@ -27,37 +28,40 @@ export default function HindaviDairy() {
   const [newAdminSetup, setNewAdminSetup] = useState({ id: "", pass: "", name: "" });
   const [newCollection, setNewCollection] = useState({ userId: "", session: "सकाळ", litres: "", fat: "", smf: "", rate: "" });
   const [newUser, setNewUser] = useState({ name: "", mobile: "", telegramChatId: "", village: "", type: "शेतकरी" });
+  const [newComplaint, setNewComplaint] = useState(""); 
   const [editingUser, setEditingUser] = useState(null);
   
   const [selectedFarmerReport, setSelectedFarmerReport] = useState("");
   const [searchFarmer, setSearchFarmer] = useState("");
   const [notification, setNotification] = useState(null);
 
-  // 🔥 १. फायरबेसमधून सर्व डेटा लोड करणे
+  // 🔥 फायरबेसमधून डेटा लोड करणे
   const fetchData = async () => {
     try {
-      // शेतकरी लोड करा
       const farmersSnapshot = await getDocs(collection(db, "farmers"));
       const farmersData = farmersSnapshot.docs.map(doc => ({
-        firebaseId: doc.id,
-        ...doc.data()
+        firebaseId: doc.id, ...doc.data()
       }));
       setUsers(farmersData);
 
-      // दूध संकलन लोड करा
       const collectionsSnapshot = await getDocs(collection(db, "collections"));
       const collectionsData = collectionsSnapshot.docs.map(doc => ({
-        firebaseId: doc.id,
-        ...doc.data()
+        firebaseId: doc.id, ...doc.data()
       }));
       setCollections(collectionsData);
 
-      // ॲडमीन लोड करा
       const adminsSnapshot = await getDocs(collection(db, "admins"));
-      const adminsData = adminsSnapshot.docs.map(doc => doc.data());
-      if (adminsData.length > 0) {
-        setAdminsList([...initialAdmins, ...adminsData]);
-      }
+      const adminsData = adminsSnapshot.docs.map(doc => ({
+        firebaseId: doc.id, ...doc.data()
+      }));
+      setAdminsList([...initialAdmins, ...adminsData]);
+
+      const complaintsSnapshot = await getDocs(collection(db, "complaints"));
+      const complaintsData = complaintsSnapshot.docs.map(doc => ({
+        firebaseId: doc.id, ...doc.data()
+      }));
+      setComplaints(complaintsData);
+
     } catch (error) {
       console.error("डेटा लोड करताना एरर आली:", error);
     }
@@ -101,7 +105,11 @@ export default function HindaviDairy() {
     } else if (loginRole === "user") {
       const user = users.find(u => String(u.mobile) === String(loginId));
       if (user && loginPass === "1234") {
-        setCurrentUser({ role: "user", ...user });
+        setCurrentUser({ 
+          role: "user", 
+          ...user,
+          id: user.firebaseId || user.id || String(Date.now())
+        });
         setPage("user");
         setLoginError("");
       } else {
@@ -112,62 +120,74 @@ export default function HindaviDairy() {
 
   const handleAddAdmin = async () => {
     if (!newAdminSetup.id || !newAdminSetup.pass || !newAdminSetup.name) {
-      showNotif("कृपया सर्व माहिती भरा", "error");
-      return;
+      showNotif("कृपया सर्व माहिती भरा", "error"); return;
     }
     if (adminsList.some(a => String(a.id) === String(newAdminSetup.id))) {
-      showNotif("या ID चा Admin आधीपासूनच अस्तित्वात आहे!", "error");
-      return;
+      showNotif("या ID चा Admin आधीपासूनच अस्तित्वात आहे!", "error"); return;
     }
-    
     await addDoc(collection(db, "admins"), newAdminSetup);
-    setAdminsList([...adminsList, newAdminSetup]);
     showNotif(`नवीन Admin '${newAdminSetup.name}' यशस्वीरित्या जोडला!`);
     setNewAdminSetup({ id: "", pass: "", name: "" });
+    fetchData();
+  };
+
+  const handleDeleteAdmin = async (firebaseId) => {
+    if(!firebaseId) {
+      alert("मुख्य व्यवस्थापकाला (Default Admin) डिलीट करता येत नाही!");
+      return;
+    }
+    if (window.confirm("तुम्हाला खात्री आहे की हा ॲडमीन डिलीट करायचा आहे?")) {
+      await deleteDoc(doc(db, "admins", firebaseId));
+      showNotif("ॲडमीन यशस्वीरित्या डिलीट केला ❌");
+      fetchData();
+    }
   };
 
   // ===== दूध संकलन नोंदणी =====
   const handleAddCollection = async () => {
     if (!newCollection.userId || !newCollection.litres || !newCollection.rate) {
-      showNotif("शेतकरी/कंपनी, लिटर आणि दर भरणे अनिवार्य आहे", "error"); 
-      return;
+      showNotif("शेतकरी/कंपनी, लिटर आणि दर भरणे अनिवार्य आहे", "error"); return;
     }
 
-    const user = users.find(u => String(u.id) === String(newCollection.userId));
-    
+    const user = users.find(u => String(u.firebaseId || u.id) === String(newCollection.userId));
     if (!user) {
-      showNotif("निवडलेला शेतकरी/कंपनी सिस्टीममध्ये सापडली नाही!", "error");
-      return;
+      showNotif("निवडलेला शेतकरी/कंपनी सिस्टीममध्ये सापडली नाही!", "error"); return;
     }
 
     const litres = parseFloat(newCollection.litres);
     const rate = parseFloat(newCollection.rate);
-    const fat = parseFloat(newCollection.fat) || 0;
-    const smf = parseFloat(newCollection.smf) || 0;
     const amount = Math.round(litres * rate);
 
     const coll = {
-      id: String(Date.now()), // युनिक स्ट्रिंग आयडी
-      userId: String(user.id),
+      id: String(Date.now()),
+      userId: String(user.firebaseId || user.id),
       userName: user.name, 
       date: new Date().toISOString().split("T")[0],
       session: newCollection.session,
-      litres, fat, smf, rate, amount,
+      litres, fat: parseFloat(newCollection.fat) || 0, smf: parseFloat(newCollection.smf) || 0, rate, amount,
     };
     
     await addDoc(collection(db, "collections"), coll);
-    setCollections([...collections, coll]);
 
     if (user.telegramChatId) {
-      const receipt = `🥛 *दूध संकलन पावती - हिंदवी डेअरी* \n\nदिनांक: ${coll.date} (${coll.session})\nग्राहक/कंपनी: ${coll.userName}\nदूध: ${coll.litres} लि.\nफॅट: ${coll.fat}%\nSMF: ${coll.smf}%\nदर: ₹${coll.rate}/लि.\n*एकूण रक्कम: ₹${coll.amount}*\n\nधन्यवाद! 🙏`;
+      const receipt = `🥛 *दूध संकलन पावती - हिंदवी डेअरी* \n\nदिनांक: ${coll.date} (${coll.session})\nग्राहक/कंपनी: ${coll.userName}\nदूध: ${coll.litres} लि.\nदर: ₹${coll.rate}/लि.\n*एकूण रक्कम: ₹${coll.amount}*\n\nधन्यवाद! 🙏`;
       sendTelegramNotification(user.telegramChatId, receipt);
     }
 
     setNewCollection({ userId: "", session: "सकाळ", litres: "", fat: "", smf: "", rate: "" });
     showNotif("संकलन नोंदवून पावती पाठवली! ✅");
+    fetchData();
   };
 
-  // ===== शेतकरी जोडा / दुरुस्त करा (Fixed Firebase Update) =====
+  const handleDeleteCollection = async (firebaseId) => {
+    if (window.confirm("तुम्हाला खात्री आहे की ही नोंद इतिहासामधून डिलीट करायची आहे?")) {
+      await deleteDoc(doc(db, "collections", firebaseId));
+      showNotif("नोंद डिलीट केली ❌");
+      fetchData();
+    }
+  };
+
+  // ===== शेतकरी जोडा / दुरुस्त करा =====
   const handleAddUser = async () => {
     if (!newUser.name || !newUser.mobile || !newUser.village) {
       showNotif("सर्व माहिती भरा", "error"); return;
@@ -175,76 +195,90 @@ export default function HindaviDairy() {
     
     if (editingUser) {
       try {
-        // 🔥 फायरबेसमध्ये परमनंट अपडेट करा
         const userDocRef = doc(db, "farmers", editingUser.firebaseId);
         await updateDoc(userDocRef, {
-          name: newUser.name,
-          mobile: newUser.mobile,
-          telegramChatId: newUser.telegramChatId,
-          village: newUser.village,
-          type: newUser.type
+          name: newUser.name, mobile: newUser.mobile,
+          telegramChatId: newUser.telegramChatId, village: newUser.village, type: newUser.type
         });
-
-        showNotif("माहिती फायरबेसमध्ये अद्ययावत केली ✅");
+        showNotif("माहिती अद्ययावत केली ✅");
         setEditingUser(null);
-        fetchData(); // डेटाबेस मधून फ्रेश डेटा पुन्हा लोड करा
+        fetchData();
       } catch (error) {
-        console.error("अपडेट करताना एरर आली:", error);
         showNotif("माहिती अपडेट झाली नाही", "error");
       }
     } else {
       const uniqueId = String(Date.now()); 
       const user = {
-        id: uniqueId, 
-        ...newUser,
+        id: uniqueId, ...newUser,
         joined: new Date().toISOString().split("T")[0],
       };
-      
       await addDoc(collection(db, "farmers"), user);
-      setUsers([...users, user]);
       showNotif(`नवीन ${newUser.type} जोडला गेला ✅`);
+      fetchData();
     }
     setNewUser({ name: "", mobile: "", telegramChatId: "", village: "", type: "शेतकरी" });
   };
 
+  const handleDeleteUser = async (firebaseId) => {
+    if (window.confirm("तुम्हाला हा शेतकरी डिलीट करायचा आहे का? यामुळे त्यांचा डेटा निघून जाईल.")) {
+      await deleteDoc(doc(db, "farmers", firebaseId));
+      showNotif("शेतकरी डिलीट केला ❌");
+      fetchData();
+    }
+  };
+
+  // युझर पॅनेलमधून तक्रार दाखल करणे
+  const handleSubmitComplaint = async () => {
+    if (!newComplaint.trim()) {
+      alert("कृपया तक्रार टाईप करा"); return;
+    }
+    const complaintData = {
+      userId: currentUser.id || "unknown_user",
+      userName: currentUser.name || "अनामिक शेतकरी",
+      userMobile: currentUser.mobile || "",
+      text: newComplaint,
+      date: new Date().toISOString().split("T")[0]
+    };
+    await addDoc(collection(db, "complaints"), complaintData);
+    showNotif("तकरीर यशस्वीरित्या नोंदवली. व्यवस्थापक लवकरच संपर्क करतील! ✅");
+    setNewComplaint("");
+    fetchData();
+  };
+
+  const handleDeleteComplaint = async (firebaseId) => {
+    await deleteDoc(doc(db, "complaints", firebaseId));
+    showNotif("तक्रार हटवली ❌");
+    fetchData();
+  };
+
   const handleEditUser = (u) => {
     setEditingUser(u);
-    setNewUser({
-      name: u.name,
-      mobile: u.mobile,
-      telegramChatId: u.telegramChatId || "",
-      village: u.village,
-      type: u.type || "शेतकरी"
-    });
+    setNewUser({ name: u.name, mobile: u.mobile, telegramChatId: u.telegramChatId || "", village: u.village, type: u.type || "शेतकरी" });
   };
 
   const getFarmer10DayRecords = (farmerId) => {
     if (!farmerId) return [];
-    return collections
-      .filter(c => String(c.userId) === String(farmerId))
-      .slice(-10);
+    return collections.filter(c => String(c.userId) === String(farmerId)).slice(-10);
   };
 
+  // 📥 सामायिक CSV डाऊनलोड फंक्शन (ॲडमीन आणि शेतकरी दोघेही वापरू शकतात)
   const downloadCSVReport = (farmerId) => {
     const records = getFarmer10DayRecords(farmerId);
-    const farmer = users.find(u => String(u.id) === String(farmerId));
+    const farmer = users.find(u => String(u.firebaseId || u.id) === String(farmerId));
     if (records.length === 0) {
-      alert("कोणताही डेटा उपलब्ध नाही.");
+      alert("डाऊनलोड करण्यासाठी कोणतीही नोंद उपलब्ध नाही!");
       return;
     }
 
     let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += `नाव: ${farmer?.name}, गाव/पत्ता: ${farmer?.village}, प्रकार: ${farmer?.type}\n`;
+    csvContent += `नाव: ${farmer?.name || 'शेतकरी'}, गाव/पत्ता: ${farmer?.village || '-'}\n`;
     csvContent += "तारीख,सत्र,दूध (लि.),फॅट (%),SMF (%),दर (रु),एकूण रक्कम (रु)\n";
-
-    records.forEach(r => {
-      csvContent += `${r.date},${r.session},${r.litres},${r.fat},${r.smf},${r.rate},${r.amount}\n`;
-    });
+    records.forEach(r => { csvContent += `${r.date},${r.session},${r.litres},${r.fat},${r.smf},${r.rate},${r.amount}\n`; });
 
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `१०_दिवसीय_रिपोर्ट_${farmer?.name}.csv`);
+    link.setAttribute("download", `रिपोर्ट_${farmer?.name || 'दूध_संकलन'}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -252,41 +286,31 @@ export default function HindaviDairy() {
 
   const send10DayReportTelegram = (farmerId) => {
     const records = getFarmer10DayRecords(farmerId);
-    const farmer = users.find(u => String(u.id) === String(farmerId));
-    
-    if (!farmer || !farmer.telegramChatId) {
-      alert("टेलिग्राम चॅट आयडी उपलब्ध नाही.");
-      return;
-    }
-    if (records.length === 0) {
-      alert("पाठवण्यासाठी कोणताही डेटा नाही.");
-      return;
-    }
+    const farmer = users.find(u => String(u.firebaseId || u.id) === String(farmerId));
+    if (!farmer || !farmer.telegramChatId || records.length === 0) return;
 
     let totalLitre = records.reduce((acc, item) => acc + item.litres, 0);
     let totalAmt = records.reduce((acc, item) => acc + item.amount, 0);
 
-    let reportText = `📜 *१०-दिवसीय अहवाल - हिंदवी डेअरी* \n\n*नाव:* ${farmer.name}\n----------------------------\n`;
-    records.forEach(r => {
-      reportText += `📅 ${r.date} (${r.session})\n🥛 ${r.litres} लि. | F: ${r.fat} | S: ${r.smf} | ₹${r.rate} | *₹${r.amount}*\n\n`;
-    });
-    reportText += `----------------------------\n📊 *एकूण दूध:* ${totalLitre} लिटर\n💰 *एकूण पेमेंट:* ₹${totalAmt}\n\nधन्यवाद! 🙏`;
+    let reportText = `📜 *१०-दिवसीय अहवाल - हिंदवी डेअरी* \n\n*नाव:* ${farmer.name}\n`;
+    records.forEach(r => { reportText += `📅 ${r.date} (${r.session}) 🥛 ${r.litres} लि. | *₹${r.amount}*\n`; });
+    reportText += `📊 *एकूण दूध:* ${totalLitre} लि. | *एकूण पेमेंट:* ₹${totalAmt}`;
 
     sendTelegramNotification(farmer.telegramChatId, reportText);
-    showNotif("१० दिवसांचा रिपोर्ट टेलिग्रामवर पाठवला! 📤");
+    showNotif("रिपोर्ट टेलिग्रामवर पाठवला! 📤");
   };
 
   const filteredUsers = users.filter(u => u.name?.toLowerCase().includes(searchFarmer.toLowerCase()) || u.village?.toLowerCase().includes(searchFarmer.toLowerCase()));
 
-  // Style constants
   const S = {
     app: { minHeight: "100vh", background: "linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%)", fontFamily: "'Noto Sans Devanagari', sans-serif", color: "#fff" },
     card: { background: "rgba(255,255,255,0.07)", backdropFilter: "blur(12px)", borderRadius: 16, padding: "20px", border: "1px solid rgba(255,255,255,0.12)", marginBottom: 16 },
-    btn: (color = "#f7b731") => ({ background: color, color: color === "#f7b731" ? "#1a1a1a" : "#fff", border: "none", borderRadius: 10, padding: "10px 22px", fontFamily: "inherit", fontSize: 15, fontWeight: 700, cursor: "pointer" }),
+    btn: (color = "#f7b731") => ({ background: color, color: color === "#f7b731" ? "#1a1a1a" : "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontSize: 14, fontWeight: 700, cursor: "pointer" }),
     input: { background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 10, padding: "10px 14px", color: "#fff", width: "100%", boxSizing: "border-box" },
     label: { fontSize: 13, color: "#aad4f5", marginBottom: 4, display: "block" },
     tab: (active) => ({ padding: "10px 18px", borderRadius: 10, border: "none", background: active ? "#f7b731" : "rgba(255,255,255,0.08)", color: active ? "#1a1a1a" : "#ccc", cursor: "pointer", whiteSpace: "nowrap" }),
     header: { background: "rgba(0,0,0,0.35)", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid rgba(255,255,255,0.1)" },
+    delBtn: { background: "#e74c3c", color: "#fff", border: "none", padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12, marginLeft: 6 }
   };
 
   // ===== LOGIN SCREEN =====
@@ -303,7 +327,6 @@ export default function HindaviDairy() {
             <button onClick={() => setLoginRole("admin")} style={{ ...S.tab(loginRole === "admin"), flex: 1 }}>⚙️ व्यवस्थापक</button>
             <button onClick={() => setLoginRole("user")} style={{ ...S.tab(loginRole === "user"), flex: 1 }}>👨‍🌾 युझर पॅनेल</button>
           </div>
-
           <div style={{ marginBottom: 14, textAlign: "left" }}>
             <label style={S.label}>{loginRole === "admin" ? "Admin ID" : "📱 मोबाईल नंबर"}</label>
             <input style={S.input} value={loginId} onChange={e => setLoginId(e.target.value)} placeholder={loginRole === "admin" ? "admin" : "9876543210"} />
@@ -313,9 +336,7 @@ export default function HindaviDairy() {
             <input type="password" style={S.input} value={loginPass} onChange={e => setLoginPass(e.target.value)} placeholder="••••••" />
           </div>
           {loginError && <div style={{ color: "#ff6b6b", marginBottom: 12 }}>{loginError}</div>}
-          <button onClick={handleLogin} style={{ ...S.btn(), width: "100%", marginBottom: 10 }}>🚀 लॉग इन करा</button>
-          
-          {loginRole === "user" && <p style={{ fontSize: 12, color: "#aaa" }}>* युझरचा डीफॉल्ट पासवर्ड 1234 आहे.</p>}
+          <button onClick={handleLogin} style={{ ...S.btn(), width: "100%" }}>🚀 लॉग इन करा</button>
         </div>
       </div>
     </div>
@@ -328,17 +349,14 @@ export default function HindaviDairy() {
       { key: "collection", label: "🥛 दूध संकलन" },
       { key: "report10", label: "🧾 १०-दिवस रिपोर्ट" },
       { key: "users", label: "👥 शेतकरी/कंपनी" },
+      { key: "complaints", label: `⚠️ तक्रारी (${complaints.length})` }, 
       { key: "admins", label: "⚙️ ॲडमीन व्यवस्थापन" }
     ];
 
     return (
       <div style={S.app}>
         <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;600;700&display=swap" rel="stylesheet" />
-        {notification && (
-          <div style={{ position: "fixed", top: 20, right: 20, background: "#27ae60", color: "#fff", padding: "12px 20px", borderRadius: 12, zIndex: 999 }}>
-            {notification.msg}
-          </div>
-        )}
+        {notification && <div style={{ position: "fixed", top: 20, right: 20, background: "#27ae60", color: "#fff", padding: "12px 20px", borderRadius: 12, zIndex: 999 }}>{notification.msg}</div>}
         <div style={S.header}>
           <div>
             <div style={{ fontWeight: 800, fontSize: 16, color: "#f7b731" }}>🐄 हिंदवी दूध संकलन केंद्र</div>
@@ -358,6 +376,7 @@ export default function HindaviDairy() {
               <h3>📊 आजची आकडेवारी</h3>
               <p>एकूण शेतकरी व कंपन्या संख्या: <b>{users.length}</b></p>
               <p>एकूण दूध संकलन नोंदी: <b>{collections.length}</b></p>
+              <p>प्रलंबित तक्रारी: <b style={{ color: complaints.length > 0 ? "#ff6b6b" : "#fff" }}>{complaints.length}</b></p>
             </div>
           )}
 
@@ -367,43 +386,29 @@ export default function HindaviDairy() {
               <h3>🥛 नवीन दूध संकलन नोंदणी</h3>
               <div style={{ display: "grid", gap: 12 }}>
                 <div>
-                  <label style={S.label}>शेतकरी किंवा कंपनी निवडा</label>
                   <select style={S.input} value={newCollection.userId} onChange={e => setNewCollection({ ...newCollection, userId: e.target.value })}>
-                    <option value="">-- निवडा --</option>
-                    {users.map(u => <option key={u.id} value={String(u.id)} style={{ color: '#000' }}>[{u.type}] {u.name} ({u.village})</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label style={S.label}>सत्र (Session)</label>
-                  <select style={S.input} value={newCollection.session} onChange={e => setNewCollection({ ...newCollection, session: e.target.value })}>
-                    <option value="सकाळ">🌅 सकाळ</option>
-                    <option value="संध्याकाळ">🌙 संध्याकाळ</option>
+                    <option value="">-- शेतकरी/कंपनी निवडा --</option>
+                    {users.map(u => (
+                      <option key={u.firebaseId || u.id} value={String(u.firebaseId || u.id)} style={{ color: '#000' }}>
+                        [{u.type}] {u.name} ({u.village})
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <div>
-                    <label style={S.label}>दूध लिटर</label>
-                    <input type="number" style={S.input} placeholder="0.0" value={newCollection.litres} onChange={e => setNewCollection({ ...newCollection, litres: e.target.value })} />
-                  </div>
-                  <div>
-                    <label style={S.label}>दर (Rate प्रति लिटर)</label>
-                    <input type="number" style={S.input} placeholder="₹ 0.0" value={newCollection.rate} onChange={e => setNewCollection({ ...newCollection, rate: e.target.value })} />
-                  </div>
+                  <input type="number" style={S.input} placeholder="दूध लिटर" value={newCollection.litres} onChange={e => setNewCollection({ ...newCollection, litres: e.target.value })} />
+                  <input type="number" style={S.input} placeholder="दर (Rate)" value={newCollection.rate} onChange={e => setNewCollection({ ...newCollection, rate: e.target.value })} />
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <div>
-                    <label style={S.label}>फॅट %</label>
-                    <input type="number" style={S.input} placeholder="0.0" value={newCollection.fat} onChange={e => setNewCollection({ ...newCollection, fat: e.target.value })} />
-                  </div>
-                  <div>
-                    <label style={S.label}>SMF %</label>
-                    <input type="number" style={S.input} placeholder="0.0" value={newCollection.smf} onChange={e => setNewCollection({ ...newCollection, smf: e.target.value })} />
-                  </div>
+                  <input type="number" style={S.input} placeholder="फॅट %" value={newCollection.fat} onChange={e => setNewCollection({ ...newCollection, fat: e.target.value })} />
+                  <input type="number" style={S.input} placeholder="SMF %" value={newCollection.smf} onChange={e => setNewCollection({ ...newCollection, smf: e.target.value })} />
                 </div>
-
-                <div style={{ background: "rgba(46, 204, 113, 0.15)", padding: 12, borderRadius: 10, textAlign: "center", border: "1px dashed #2ecc71" }}>
-                  <span style={{ fontSize: 16 }}>💰 एकूण रक्कम: <b>₹ {liveAmount}</b></span>
-                </div>
+                
+                {liveAmount > 0 && (
+                  <div style={{ background: "rgba(46, 204, 113, 0.15)", border: "1px dashed #2ecc71", padding: 10, borderRadius: 10, textAlign: "center", color: "#2ecc71", fontWeight: "bold" }}>
+                    📊 एकूण अंदाजे रक्कम: ₹{liveAmount}
+                  </div>
+                )}
 
                 <button onClick={handleAddCollection} style={S.btn()}>✅ संकलन जतन करा</button>
               </div>
@@ -413,50 +418,41 @@ export default function HindaviDairy() {
           {/* 10-DAY REPORT */}
           {adminTab === "report10" && (
             <div style={S.card}>
-              <h3>🧾 १०-दिवसीय रिपोर्ट (शेतकरी/कंपनी)</h3>
-              <div style={{ marginBottom: 16 }}>
-                <label style={S.label}>निवडा</label>
-                <select style={S.input} value={selectedFarmerReport} onChange={e => setSelectedFarmerReport(e.target.value)}>
-                  <option value="">-- निवडा --</option>
-                  {users.map(u => <option key={u.id} value={u.id} style={{ color: '#000' }}>{u.name} ({u.type})</option>)}
-                </select>
-              </div>
+              <h3>🧾 १०-दिवसीय रिपोर्ट आणि इतिहास व्यवस्थापन</h3>
+              <select style={{ ...S.input, marginBottom: 16 }} value={selectedFarmerReport} onChange={e => setSelectedFarmerReport(e.target.value)}>
+                <option value="">-- निवडा --</option>
+                {users.map(u => <option key={u.firebaseId || u.id} value={u.firebaseId || u.id} style={{ color: '#000' }}>{u.name} ({u.type})</option>)}
+              </select>
 
               {selectedFarmerReport && (
                 <div>
                   <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
                     <button onClick={() => downloadCSVReport(selectedFarmerReport)} style={S.btn("#3498db")}>📥 CSV डाउनलोड</button>
-                    <button onClick={() => send10DayReportTelegram(selectedFarmerReport)} style={S.btn("#2ecc71")}>📤 टेलिग्रामवर पाठवा</button>
+                    <button onClick={() => send10DayReportTelegram(selectedFarmerReport)} style={S.btn("#2ecc71")}>📤 टेलिग्राम</button>
                   </div>
 
-                  <div style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 14 }}>
-                      <thead>
-                        <tr style={{ borderBottom: "2px solid rgba(255,255,255,0.2)", color: "#aad4f5" }}>
-                          <th style={{ padding: 8 }}>तारीख</th>
-                          <th style={{ padding: 8 }}>सत्र</th>
-                          <th style={{ padding: 8 }}>दूध (लि.)</th>
-                          <th style={{ padding: 8 }}>फॅट</th>
-                          <th style={{ padding: 8 }}>SMF</th>
-                          <th style={{ padding: 8 }}>दर</th>
-                          <th style={{ padding: 8 }}>रक्कम</th>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ color: "#aad4f5", borderBottom: "2px solid rgba(255,255,255,0.2)" }}>
+                        <th style={{ padding: 6, textAlign: "left" }}>तारीख</th>
+                        <th style={{ padding: 6, textAlign: "left" }}>दूध</th>
+                        <th style={{ padding: 6, textAlign: "left" }}>रक्कम</th>
+                        <th style={{ padding: 6, textAlign: "center" }}>ॲक्शन</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {getFarmer10DayRecords(selectedFarmerReport).map(r => (
+                        <tr key={r.firebaseId || r.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+                          <td style={{ padding: 6 }}>{r.date}</td>
+                          <td style={{ padding: 6 }}>{r.litres} लि.</td>
+                          <td style={{ padding: 6 }}>₹{r.amount}</td>
+                          <td style={{ padding: 6, textAlign: "center" }}>
+                            <button onClick={() => handleDeleteCollection(r.firebaseId)} style={S.delBtn}>🗑️ डिलीट</button>
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {getFarmer10DayRecords(selectedFarmerReport).map(r => (
-                          <tr key={r.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
-                            <td style={{ padding: 8 }}>{r.date}</td>
-                            <td style={{ padding: 8 }}>{r.session}</td>
-                            <td style={{ padding: 8 }}>{r.litres}</td>
-                            <td style={{ padding: 8 }}>{r.fat || "-"}</td>
-                            <td style={{ padding: 8 }}>{r.smf || "-"}</td>
-                            <td style={{ padding: 8 }}>₹{r.rate}</td>
-                            <td style={{ padding: 8, color: "#2ecc71", fontWeight: "bold" }}>₹{r.amount}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>
@@ -466,71 +462,63 @@ export default function HindaviDairy() {
           {adminTab === "users" && (
             <div style={S.card}>
               <h3>👥 शेतकरी आणि कंपनी व्यवस्थापन</h3>
-              
               <div style={{ display: "grid", gap: 12, marginBottom: 20, background: "rgba(255,255,255,0.03)", padding: 12, borderRadius: 10 }}>
-                <div>
-                  <label style={S.label}>प्रकार निवडा</label>
-                  <select style={S.input} value={newUser.type} onChange={e => setNewUser({ ...newUser, type: e.target.value })}>
-                    <option value="शेतकरी">शेतकरी (Farmer)</option>
-                    <option value="कंपनी">कंपनी (Corporate/Bulk Company)</option>
-                  </select>
-                </div>
-                <input style={S.input} placeholder="नाव (शेतकरी/कंपनीचे नाव)" value={newUser.name} onChange={e => setNewUser({ ...newUser, name: e.target.value })} />
-                <input style={S.input} placeholder="मोबाईल नंबर" value={newUser.mobile} onChange={e => setNewUser({ ...newUser, mobile: e.target.value })} />
-                <input style={S.input} placeholder="Telegram Chat ID (ऐच्छिक)" value={newUser.telegramChatId} onChange={e => setNewUser({ ...newUser, telegramChatId: e.target.value })} />
-                <input style={S.input} placeholder="गाव / पत्ता" value={newUser.village} onChange={e => setNewUser({ ...newUser, village: e.target.value })} />
-                <button onClick={handleAddUser} style={S.btn("#2ecc71")}>
-                  {editingUser ? "🔄 माहिती अपडेट करा" : "💾 माहिती जतन करा"}
-                </button>
-                {editingUser && <button onClick={() => { setEditingUser(null); setNewUser({ name: "", mobile: "", telegramChatId: "", village: "", type: "शेतकरी" }); }} style={S.btn("#e74c3c")}>रद्द करा</button>}
+                <input style={S.input} placeholder="नाव" value={newUser.name} onChange={e => setNewUser({ ...newUser, name: e.target.value })} />
+                <input style={S.input} placeholder="मोबाईल" value={newUser.mobile} onChange={e => setNewUser({ ...newUser, mobile: e.target.value })} />
+                <input style={S.input} placeholder="गाव" value={newUser.village} onChange={e => setNewUser({ ...newUser, village: e.target.value })} />
+                <button onClick={handleAddUser} style={S.btn("#2ecc71")}>{editingUser ? "🔄 अपडेट करा" : "💾 जतन करा"}</button>
               </div>
 
-              <div style={{ marginBottom: 12 }}>
-                <input style={S.input} placeholder="🔍 नाव किंवा गावावरून शोधा..." value={searchFarmer} onChange={e => setSearchFarmer(e.target.value)} />
-              </div>
+              <input style={{ ...S.input, marginBottom: 12 }} placeholder="🔍 शोधा..." value={searchFarmer} onChange={e => setSearchFarmer(e.target.value)} />
 
-              <div>
-                {filteredUsers.map(u => (
-                  <div key={u.id} style={{ background: "rgba(255,255,255,0.05)", padding: 12, borderRadius: 8, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      <div><b>{u.name}</b> <span style={{ fontSize: 11, background: u.type === 'कंपनी' ? '#e67e22' : '#3498db', padding: '2px 6px', borderRadius: 4 }}>{u.type}</span></div>
-                      <div style={{ fontSize: 12, color: "#aaa" }}>गाव: {u.village} | मोबाईल: {u.mobile}</div>
-                    </div>
-                    <button onClick={() => handleEditUser(u)} style={{ ...S.btn(), padding: "6px 12px", fontSize: 12 }}>✏️ दुरुस्त करा</button>
+              {filteredUsers.map(u => (
+                <div key={u.firebaseId || u.id} style={{ background: "rgba(255,255,255,0.05)", padding: 12, borderRadius: 8, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div><b>{u.name}</b> ({u.village})</div>
+                  <div>
+                    <button onClick={() => handleEditUser(u)} style={{ ...S.btn(), padding: "5px 10px", fontSize: 12 }}>✏️</button>
+                    <button onClick={() => handleDeleteUser(u.firebaseId)} style={S.delBtn}>🗑️ डिलीट</button>
                   </div>
-                ))}
-              </div>
+                </div>
+              ))}
             </div>
           )}
 
-          {/* ADD NEW ADMIN PANEL */}
+          {/* COMPLAINTS TAB FOR ADMIN */}
+          {adminTab === "complaints" && (
+            <div style={S.card}>
+              <h3>⚠️ शेतकऱ्यांच्या तक्रारी / संदेश</h3>
+              {complaints.length === 0 ? <p style={{ color: "#aaa" }}>सध्या कोणतीही तक्रार प्रलंबित नाही.</p> : 
+                complaints.map(c => (
+                  <div key={c.firebaseId || c.id} style={{ background: "rgba(231, 76, 60, 0.1)", border: "1px solid rgba(231, 76, 60, 0.3)", padding: 14, borderRadius: 10, marginBottom: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#aad4f5" }}>
+                      <b>👤 {c.userName} ({c.userMobile})</b>
+                      <span>📅 {c.date}</span>
+                    </div>
+                    <p style={{ margin: "8px 0", fontSize: 15, color: "#fff" }}>📝 {c.text}</p>
+                    <button onClick={() => handleDeleteComplaint(c.firebaseId)} style={{ ...S.btn("#2ecc71"), padding: "4px 10px", fontSize: 12 }}>निवारण झाले (Delete) ✅</button>
+                  </div>
+                ))
+              }
+            </div>
+          )}
+
+          {/* ADMIN MANAGEMENT */}
           {adminTab === "admins" && (
             <div style={S.card}>
-              <h3>⚙️ नवीन व्यवस्थापक (Admin) जोडा</h3>
-              <p style={{ fontSize: 13, color: '#aaa' }}>येथून जोडलेले नवीन ॲडमीन स्वतंत्रपणे त्यांच्या स्वतःच्या आयडीने लॉग इन करू शकतील.</p>
-              
-              <div style={{ display: "grid", gap: 12, marginTop: 15 }}>
-                <div>
-                  <label style={S.label}>ॲडमीनचे नाव</label>
-                  <input style={S.input} placeholder="उदा. राहुल शिंदे" value={newAdminSetup.name} onChange={e => setNewAdminSetup({ ...newAdminSetup, name: e.target.value })} />
-                </div>
-                <div>
-                  <label style={S.label}>नवीन Admin ID</label>
-                  <input style={S.input} placeholder="उदा. admin2" value={newAdminSetup.id} onChange={e => setNewAdminSetup({ ...newAdminSetup, id: e.target.value })} />
-                </div>
-                <div>
-                  <label style={S.label}>पासवर्ड</label>
-                  <input type="password" style={S.input} placeholder="••••••" value={newAdminSetup.pass} onChange={e => setNewAdminSetup({ ...newAdminSetup, pass: e.target.value })} />
-                </div>
-                <button onClick={handleAddAdmin} style={S.btn("#2ecc71")}>➕ नवीन ॲडमीन सक्रिय करा</button>
+              <h3>⚙️ ॲडमीन व्यवस्थापन</h3>
+              <div style={{ display: "grid", gap: 12, marginBottom: 16 }}>
+                <input style={S.input} placeholder="नाव" value={newAdminSetup.name} onChange={e => setNewAdminSetup({ ...newAdminSetup, name: e.target.value })} />
+                <input style={S.input} placeholder="नवीन ID" value={newAdminSetup.id} onChange={e => setNewAdminSetup({ ...newAdminSetup, id: e.target.value })} />
+                <input type="password" style={S.input} placeholder="पासवर्ड" value={newAdminSetup.pass} onChange={e => setNewAdminSetup({ ...newAdminSetup, pass: e.target.value })} />
+                <button onClick={handleAddAdmin} style={S.btn("#2ecc71")}>➕ ॲडमीन जोडा</button>
               </div>
-
-              <h4 style={{ marginTop: 25, color: '#aad4f5' }}>सध्याचे सक्रिय ॲडमीन:</h4>
-              <ul>
-                {adminsList.map((a, idx) => (
-                  <li key={idx} style={{ marginBottom: 6 }}><b>{a.name}</b> (ID: <span style={{ color: '#f7b731' }}>{a.id}</span>)</li>
-                ))}
-              </ul>
+              <h4>सर्व सक्रिय ॲडमीन:</h4>
+              {adminsList.map((a, idx) => (
+                <div key={a.firebaseId || idx} style={{ display: "flex", justifyContent: "space-between", background: "rgba(255,255,255,0.05)", padding: 10, borderRadius: 8, marginBottom: 6 }}>
+                  <span><b>{a.name}</b> (ID: {a.id})</span>
+                  {a.firebaseId && <button onClick={() => handleDeleteAdmin(a.firebaseId)} style={S.delBtn}>🗑️ डिलीट</button>}
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -540,71 +528,57 @@ export default function HindaviDairy() {
 
   // ===== USER / FARMER SCREEN =====
   if (page === "user" && currentUser) {
-    const userRecords = getFarmer10DayRecords(currentUser.id);
+    const userRecords = collections.filter(c => String(c.userId) === String(currentUser.id));
+    // शेवटच्या १० नोंदी काढणे (रिपोर्टसाठी)
+    const last10Records = userRecords.slice(-10);
+
     return (
       <div style={S.app}>
+        {notification && <div style={{ position: "fixed", top: 20, right: 20, background: "#27ae60", color: "#fff", padding: "12px 20px", borderRadius: 12, zIndex: 999 }}>{notification.msg}</div>}
         <div style={S.header}>
           <div>
-            <div style={{ fontWeight: 800 }}>👨‍🌾 {currentUser.name} ({currentUser.type})</div>
-            <div style={{ fontSize: 11, color: "#ccc" }}>गाव/पत्ता: {currentUser.village}</div>
+            <div style={{ fontWeight: 800 }}>👨‍🌾 {currentUser.name}</div>
+            <div style={{ fontSize: 11, color: "#ccc" }}>गाव: {currentUser.village}</div>
           </div>
           <button onClick={() => setPage("login")} style={S.btn("#e74c3c")}>🚪 बाहेर</button>
         </div>
         
         <div style={{ padding: 16 }}>
-          {/* USER 10 DAY REPORT */}
+          
+          {/* 🟢 नवीन विभाग: युझर लेव्हल CSV रिपोर्ट डाऊनलोड */}
           <div style={S.card}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 15, flexWrap: "wrap", gap: 10 }}>
-              <h3 style={{ color: '#f7b731', margin: 0 }}>📜 तुमचा १०-दिवसीय दूध अहवाल</h3>
-              {userRecords.length > 0 && (
-                <button onClick={() => downloadCSVReport(currentUser.id)} style={S.btn("#3498db")}>📥 रिपोर्ट डाउनलोड (CSV)</button>
-              )}
-            </div>
-
-            {userRecords.length === 0 ? (
-              <p style={{ color: '#aaa' }}>सध्या कोणतीही नोंद उपलब्ध नाही.</p>
-            ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 14 }}>
-                  <thead>
-                    <tr style={{ borderBottom: "2px solid rgba(255,255,255,0.2)", color: "#aad4f5" }}>
-                      <th style={{ padding: 8 }}>तारीख</th>
-                      <th style={{ padding: 8 }}>सत्र</th>
-                      <th style={{ padding: 8 }}>दूध (लि.)</th>
-                      <th style={{ padding: 8 }}>फॅट</th>
-                      <th style={{ padding: 8 }}>SMF</th>
-                      <th style={{ padding: 8 }}>दर</th>
-                      <th style={{ padding: 8 }}>रक्कम</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {userRecords.map(r => (
-                      <tr key={r.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
-                        <td style={{ padding: 8 }}>{r.date}</td>
-                        <td style={{ padding: 8 }}>{r.session}</td>
-                        <td style={{ padding: 8 }}>{r.litres} लि.</td>
-                        <td style={{ padding: 8 }}>{r.fat}%</td>
-                        <td style={{ padding: 8 }}>{r.smf}%</td>
-                        <td style={{ padding: 8 }}>₹{r.rate}</td>
-                        <td style={{ padding: 8, color: "#2ecc71", fontWeight: "bold" }}>₹{r.amount}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            <h3 style={{ color: "#f7b731", marginTop: 0 }}>📊 तुमचा १०-दिवसांचा रिपोर्ट</h3>
+            <p style={{ fontSize: 13, color: "#e0e0e0", marginBottom: 12 }}>तुमच्या शेवटच्या १० दिवसांच्या दूध संकलनाचा गोषवारा (CSV फाइल) मोबाईलमध्ये डाऊनलोड करा.</p>
+            <button 
+              onClick={() => downloadCSVReport(currentUser.id)} 
+              style={S.btn("#3498db")}
+              disabled={last10Records.length === 0}
+            >
+              📥 एक्सेल / CSV रिपोर्ट डाऊनलोड करा
+            </button>
           </div>
 
-          {/* ALL HISTORICAL RECORDS */}
+          {/* WRITE COMPLAINT SECTION */}
           <div style={S.card}>
-            <h3 style={{ color: '#aad4f5' }}>🥛 सर्व संकलन इतिहास</h3>
-            {collections.filter(c => String(c.userId) === String(currentUser.id)).map(c => (
-              <div key={c.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", padding: "10px 0" }}>
-                <div><b>दिनांक:</b> {c.date} ({c.session})</div>
-                <div>दूध: {c.litres} लि. | फॅट: {c.fat}% | SMF: {c.smf}% | दर: ₹{c.rate}</div>
-                <div style={{ color: "#2ecc71" }}><b>एकूण रक्कम: ₹{c.amount}</b></div>
-              </div>
-            ))}
+            <h3 style={{ color: "#aad4f5", marginTop: 0 }}>⚠️ तक्रार किंवा संदेश पाठवा</h3>
+            <textarea style={{ ...S.input, height: 70, resize: "none", fontFamily: "inherit", marginBottom: 10 }} placeholder="तुमची तक्रार किंवा दुधाबद्दलचा प्रश्न येथे लिहा..." value={newComplaint} onChange={e => setNewComplaint(e.target.value)} />
+            <button onClick={handleSubmitComplaint} style={S.btn("#e67e22")}>📤 तक्रार सबमिट करा</button>
+          </div>
+
+          {/* HISTORICAL RECORDS */}
+          <div style={S.card}>
+            <h3 style={{ color: '#aad4f5' }}>🥛 तुमचा दूध संकलन इतिहास</h3>
+            {userRecords.length === 0 ? <p style={{ color: '#aaa' }}>कोणतीही नोंद उपलब्ध नाही.</p> : 
+              userRecords.map(c => (
+                <div key={c.firebaseId || c.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", padding: "12px 0" }}>
+                  <div><b>दिनांक:</b> {c.date} ({c.session})</div>
+                  <div style={{ fontSize: 14, color: "#e0e0e0", margin: "4px 0" }}>
+                    दूध: <b>{c.litres} लि.</b> | फॅट: {c.fat}% | दर: ₹{c.rate}
+                  </div>
+                  <div style={{ color: "#2ecc71", fontSize: 15 }}><b>एकूण रक्कम: ₹{c.amount}</b></div>
+                </div>
+              ))
+            }
           </div>
         </div>
       </div>
