@@ -1,4 +1,6 @@
-﻿import { initializeApp } from "firebase/app";
+/* eslint-disable unicode-bom */
+
+import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
