@@ -1,5 +1,4 @@
 import React, { useState } from "react";
-
 // ===== TELEGRAM CONFIG =====
 const TELEGRAM_BOT_TOKEN = process.env.REACT_APP_TELEGRAM_BOT_TOKEN || "8985832159:AAGZy1qOX-qQ6YfhiBnlDm7MvsU_w88UjpE";
 
