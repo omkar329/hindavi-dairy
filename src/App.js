@@ -1,44 +1,29 @@
 import { db } from "./firebase";
-import { collection, addDoc } from "firebase/firestore";
-import React, { useState } from "react";
+import { collection, addDoc, getDocs, doc, updateDoc } from "firebase/firestore";
+import React, { useState, useEffect } from "react";
 
 // ===== TELEGRAM CONFIG =====
 const TELEGRAM_BOT_TOKEN = process.env.REACT_APP_TELEGRAM_BOT_TOKEN || "8985832159:AAGZy1qOX-qQ6YfhiBnlDm7MvsU_w88UjpE";
 
-// ===== SAMPLE DATA =====
 const initialAdmins = [
   { id: "admin", pass: "dairy123", name: "मुख्य व्यवस्थापक" }
-];
-
-const initialUsers = [
-  { id: 1, name: "रामराव पाटील", mobile: "9876543210", telegramChatId: "123456789", village: "चिंचोली", type: "शेतकरी", joined: "2026-06-01" },
-  { id: 2, name: "रिलायन्स अ‍ॅग्रो कंपनी", mobile: "9999988888", telegramChatId: "", village: "मुंबई", type: "कंपनी", joined: "2026-06-02" }
-];
-
-const initialCollections = [
-  { id: 1, userId: 1, userName: "रामराव पाटील", date: "2026-06-01", session: "सकाळ", litres: 10, fat: 4.0, smf: 8.5, rate: 35, amount: 350 },
-  { id: 2, userId: 1, userName: "रामराव पाटील", date: "2026-06-01", session: "संध्याकाळ", litres: 8, fat: 4.2, smf: 8.6, rate: 36, amount: 288 },
-  { id: 3, userId: 2, userName: "रिलायन्स अ‍ॅग्रो कंपनी", date: "2026-06-02", session: "सकाळ", litres: 500, fat: 4.5, smf: 8.8, rate: 40, amount: 20000 }
 ];
 
 export default function HindaviDairy() {
   const [page, setPage] = useState("login"); 
   const [currentUser, setCurrentUser] = useState(null);
   
-  // State Lists
   const [adminsList, setAdminsList] = useState(initialAdmins);
-  const [users, setUsers] = useState(initialUsers);
-  const [collections, setCollections] = useState(initialCollections);
+  const [users, setUsers] = useState([]);
+  const [collections, setCollections] = useState([]);
   
   const [adminTab, setAdminTab] = useState("dashboard");
   const [loginRole, setLoginRole] = useState("admin"); 
   
-  // Login form states
   const [loginId, setLoginId] = useState("");
   const [loginPass, setLoginPass] = useState("");
   const [loginError, setLoginError] = useState("");
 
-  // Form setup states
   const [newAdminSetup, setNewAdminSetup] = useState({ id: "", pass: "", name: "" });
   const [newCollection, setNewCollection] = useState({ userId: "", session: "सकाळ", litres: "", fat: "", smf: "", rate: "" });
   const [newUser, setNewUser] = useState({ name: "", mobile: "", telegramChatId: "", village: "", type: "शेतकरी" });
@@ -47,6 +32,40 @@ export default function HindaviDairy() {
   const [selectedFarmerReport, setSelectedFarmerReport] = useState("");
   const [searchFarmer, setSearchFarmer] = useState("");
   const [notification, setNotification] = useState(null);
+
+  // 🔥 १. फायरबेसमधून सर्व डेटा लोड करणे
+  const fetchData = async () => {
+    try {
+      // शेतकरी लोड करा
+      const farmersSnapshot = await getDocs(collection(db, "farmers"));
+      const farmersData = farmersSnapshot.docs.map(doc => ({
+        firebaseId: doc.id,
+        ...doc.data()
+      }));
+      setUsers(farmersData);
+
+      // दूध संकलन लोड करा
+      const collectionsSnapshot = await getDocs(collection(db, "collections"));
+      const collectionsData = collectionsSnapshot.docs.map(doc => ({
+        firebaseId: doc.id,
+        ...doc.data()
+      }));
+      setCollections(collectionsData);
+
+      // ॲडमीन लोड करा
+      const adminsSnapshot = await getDocs(collection(db, "admins"));
+      const adminsData = adminsSnapshot.docs.map(doc => doc.data());
+      if (adminsData.length > 0) {
+        setAdminsList([...initialAdmins, ...adminsData]);
+      }
+    } catch (error) {
+      console.error("डेटा लोड करताना एरर आली:", error);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, [page]); 
 
   const showNotif = (msg, type = "success") => {
     setNotification({ msg, type });
@@ -71,7 +90,7 @@ export default function HindaviDairy() {
 
   const handleLogin = () => {
     if (loginRole === "admin") {
-      const foundAdmin = adminsList.find(a => a.id === loginId && a.pass === loginPass);
+      const foundAdmin = adminsList.find(a => String(a.id) === String(loginId) && String(a.pass) === String(loginPass));
       if (foundAdmin) {
         setCurrentUser({ role: "admin", name: foundAdmin.name, id: foundAdmin.id });
         setPage("admin");
@@ -80,7 +99,7 @@ export default function HindaviDairy() {
         setLoginError("चुकीचा Admin ID किंवा पासवर्ड");
       }
     } else if (loginRole === "user") {
-      const user = users.find(u => u.mobile === loginId);
+      const user = users.find(u => String(u.mobile) === String(loginId));
       if (user && loginPass === "1234") {
         setCurrentUser({ role: "user", ...user });
         setPage("user");
@@ -91,32 +110,31 @@ export default function HindaviDairy() {
     }
   };
 
-  const handleAddAdmin = () => {
+  const handleAddAdmin = async () => {
     if (!newAdminSetup.id || !newAdminSetup.pass || !newAdminSetup.name) {
       showNotif("कृपया सर्व माहिती भरा", "error");
       return;
     }
-    if (adminsList.some(a => a.id === newAdminSetup.id)) {
+    if (adminsList.some(a => String(a.id) === String(newAdminSetup.id))) {
       showNotif("या ID चा Admin आधीपासूनच अस्तित्वात आहे!", "error");
       return;
     }
+    
+    await addDoc(collection(db, "admins"), newAdminSetup);
     setAdminsList([...adminsList, newAdminSetup]);
     showNotif(`नवीन Admin '${newAdminSetup.name}' यशस्वीरित्या जोडला!`);
     setNewAdminSetup({ id: "", pass: "", name: "" });
   };
 
-  // ===== FIXED ERROR FUNCTION =====
+  // ===== दूध संकलन नोंदणी =====
   const handleAddCollection = async () => {
-    // १. आधीच चेक करा की युझर आयडी सिलेक्ट केला आहे की नाही
     if (!newCollection.userId || !newCollection.litres || !newCollection.rate) {
       showNotif("शेतकरी/कंपनी, लिटर आणि दर भरणे अनिवार्य आहे", "error"); 
       return;
     }
 
-    // २. String आयडीला Integer मध्ये कन्वर्शन करून युझर शोधा
-    const user = users.find(u => u.id === parseInt(newCollection.userId));
+    const user = users.find(u => String(u.id) === String(newCollection.userId));
     
-    // ३. जर कोणत्या कारणाने युझर डेटा सापडला नाही, तर क्रॅश होऊ न देता इथेच थांबवा
     if (!user) {
       showNotif("निवडलेला शेतकरी/कंपनी सिस्टीममध्ये सापडली नाही!", "error");
       return;
@@ -129,16 +147,16 @@ export default function HindaviDairy() {
     const amount = Math.round(litres * rate);
 
     const coll = {
-      id: collections.length + 1,
-      userId: parseInt(newCollection.userId),
-      userName: user.name, // आता इथे एरर येणार नाही
+      id: String(Date.now()), // युनिक स्ट्रिंग आयडी
+      userId: String(user.id),
+      userName: user.name, 
       date: new Date().toISOString().split("T")[0],
       session: newCollection.session,
       litres, fat, smf, rate, amount,
     };
     
-    setCollections([...collections, coll]);
     await addDoc(collection(db, "collections"), coll);
+    setCollections([...collections, coll]);
 
     if (user.telegramChatId) {
       const receipt = `🥛 *दूध संकलन पावती - हिंदवी डेअरी* \n\nदिनांक: ${coll.date} (${coll.session})\nग्राहक/कंपनी: ${coll.userName}\nदूध: ${coll.litres} लि.\nफॅट: ${coll.fat}%\nSMF: ${coll.smf}%\nदर: ₹${coll.rate}/लि.\n*एकूण रक्कम: ₹${coll.amount}*\n\nधन्यवाद! 🙏`;
@@ -149,28 +167,41 @@ export default function HindaviDairy() {
     showNotif("संकलन नोंदवून पावती पाठवली! ✅");
   };
 
+  // ===== शेतकरी जोडा / दुरुस्त करा (Fixed Firebase Update) =====
   const handleAddUser = async () => {
     if (!newUser.name || !newUser.mobile || !newUser.village) {
       showNotif("सर्व माहिती भरा", "error"); return;
     }
+    
     if (editingUser) {
-      setUsers(users.map(u => u.id === editingUser.id ? { ...u, ...newUser } : u));
-      setEditingUser(null);
-      showNotif("माहिती अद्ययावत केली ✅");
+      try {
+        // 🔥 फायरबेसमध्ये परमनंट अपडेट करा
+        const userDocRef = doc(db, "farmers", editingUser.firebaseId);
+        await updateDoc(userDocRef, {
+          name: newUser.name,
+          mobile: newUser.mobile,
+          telegramChatId: newUser.telegramChatId,
+          village: newUser.village,
+          type: newUser.type
+        });
+
+        showNotif("माहिती फायरबेसमध्ये अद्ययावत केली ✅");
+        setEditingUser(null);
+        fetchData(); // डेटाबेस मधून फ्रेश डेटा पुन्हा लोड करा
+      } catch (error) {
+        console.error("अपडेट करताना एरर आली:", error);
+        showNotif("माहिती अपडेट झाली नाही", "error");
+      }
     } else {
+      const uniqueId = String(Date.now()); 
       const user = {
-        id: users.length + 1, ...newUser,
+        id: uniqueId, 
+        ...newUser,
         joined: new Date().toISOString().split("T")[0],
       };
+      
+      await addDoc(collection(db, "farmers"), user);
       setUsers([...users, user]);
-      await addDoc(collection(db, "farmers"), {
-        name: newUser.name,
-        mobile: newUser.mobile,
-        village: newUser.village,
-        type: newUser.type,
-        telegramChatId: newUser.telegramChatId,
-        joined: new Date().toISOString()
-      });
       showNotif(`नवीन ${newUser.type} जोडला गेला ✅`);
     }
     setNewUser({ name: "", mobile: "", telegramChatId: "", village: "", type: "शेतकरी" });
@@ -178,19 +209,25 @@ export default function HindaviDairy() {
 
   const handleEditUser = (u) => {
     setEditingUser(u);
-    setNewUser(u);
+    setNewUser({
+      name: u.name,
+      mobile: u.mobile,
+      telegramChatId: u.telegramChatId || "",
+      village: u.village,
+      type: u.type || "शेतकरी"
+    });
   };
 
   const getFarmer10DayRecords = (farmerId) => {
     if (!farmerId) return [];
     return collections
-      .filter(c => c.userId === parseInt(farmerId))
+      .filter(c => String(c.userId) === String(farmerId))
       .slice(-10);
   };
 
   const downloadCSVReport = (farmerId) => {
     const records = getFarmer10DayRecords(farmerId);
-    const farmer = users.find(u => u.id === parseInt(farmerId));
+    const farmer = users.find(u => String(u.id) === String(farmerId));
     if (records.length === 0) {
       alert("कोणताही डेटा उपलब्ध नाही.");
       return;
@@ -215,7 +252,7 @@ export default function HindaviDairy() {
 
   const send10DayReportTelegram = (farmerId) => {
     const records = getFarmer10DayRecords(farmerId);
-    const farmer = users.find(u => u.id === parseInt(farmerId));
+    const farmer = users.find(u => String(u.id) === String(farmerId));
     
     if (!farmer || !farmer.telegramChatId) {
       alert("टेलिग्राम चॅट आयडी उपलब्ध नाही.");
@@ -239,7 +276,7 @@ export default function HindaviDairy() {
     showNotif("१० दिवसांचा रिपोर्ट टेलिग्रामवर पाठवला! 📤");
   };
 
-  const filteredUsers = users.filter(u => u.name.toLowerCase().includes(searchFarmer.toLowerCase()) || u.village.toLowerCase().includes(searchFarmer.toLowerCase()));
+  const filteredUsers = users.filter(u => u.name?.toLowerCase().includes(searchFarmer.toLowerCase()) || u.village?.toLowerCase().includes(searchFarmer.toLowerCase()));
 
   // Style constants
   const S = {
@@ -305,7 +342,7 @@ export default function HindaviDairy() {
         <div style={S.header}>
           <div>
             <div style={{ fontWeight: 800, fontSize: 16, color: "#f7b731" }}>🐄 हिंदवी दूध संकलन केंद्र</div>
-            <div style={{ fontSize: 11, color: "#aaa" }}>व्यवस्थापक: {currentUser?.name}</div>
+            <div style={{ fontSize: 11, color: "#aaa" }}> व्यवस्थापक: {currentUser?.name}</div>
           </div>
           <button onClick={() => setPage("login")} style={S.btn("#e74c3c")}>🚪 बाहेर</button>
         </div>
@@ -442,7 +479,10 @@ export default function HindaviDairy() {
                 <input style={S.input} placeholder="मोबाईल नंबर" value={newUser.mobile} onChange={e => setNewUser({ ...newUser, mobile: e.target.value })} />
                 <input style={S.input} placeholder="Telegram Chat ID (ऐच्छिक)" value={newUser.telegramChatId} onChange={e => setNewUser({ ...newUser, telegramChatId: e.target.value })} />
                 <input style={S.input} placeholder="गाव / पत्ता" value={newUser.village} onChange={e => setNewUser({ ...newUser, village: e.target.value })} />
-                <button onClick={handleAddUser} style={S.btn("#2ecc71")}>💾 माहिती जतन करा</button>
+                <button onClick={handleAddUser} style={S.btn("#2ecc71")}>
+                  {editingUser ? "🔄 माहिती अपडेट करा" : "💾 माहिती जतन करा"}
+                </button>
+                {editingUser && <button onClick={() => { setEditingUser(null); setNewUser({ name: "", mobile: "", telegramChatId: "", village: "", type: "शेतकरी" }); }} style={S.btn("#e74c3c")}>रद्द करा</button>}
               </div>
 
               <div style={{ marginBottom: 12 }}>
@@ -558,7 +598,7 @@ export default function HindaviDairy() {
           {/* ALL HISTORICAL RECORDS */}
           <div style={S.card}>
             <h3 style={{ color: '#aad4f5' }}>🥛 सर्व संकलन इतिहास</h3>
-            {collections.filter(c => c.userId === currentUser.id).map(c => (
+            {collections.filter(c => String(c.userId) === String(currentUser.id)).map(c => (
               <div key={c.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", padding: "10px 0" }}>
                 <div><b>दिनांक:</b> {c.date} ({c.session})</div>
                 <div>दूध: {c.litres} लि. | फॅट: {c.fat}% | SMF: {c.smf}% | दर: ₹{c.rate}</div>
